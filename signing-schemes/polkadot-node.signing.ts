@@ -1,12 +1,15 @@
 import { mnemonicGenerate } from "@polkadot/util-crypto";
+import { waitReady } from "@polkadot/wasm-crypto";
 import { Keyring } from "@polkadot/keyring";
 import { ApiPromise, WsProvider } from "@polkadot/api";
 import "dotenv/config";
 
 // Modify as necessary
-const API_URL = "http://localhost:9944";
+const API_URL = "ws://127.0.0.1:9944";
 
 export const sign = async () => {
+	await waitReady();
+
 	// This is a minimal representation of our decoupled signing process,
 	// motivated by the fact that we have custodial wallets. The process is very contrived
 	// to represent all the internal communication steps; complexity reduction is not an option.
@@ -69,7 +72,7 @@ export const sign = async () => {
 		console.log({
 			message: "Call submitted successfully",
 		});
-	} catch (err) {
+	} catch (err: any) {
 		console.error({
 			message: "Error sending transaction",
 			error: err.message,
