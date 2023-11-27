@@ -52,9 +52,8 @@ export const sign = async () => {
 	});
 	signer.unlock(); // No passphrase was used
 
-	const signature = signer.sign(fromHex(encodedCall));
-	const encodedSignature = toHex(signature);
-	// The `encodedSignature` is passed arround as a hex string, and reaches the publishing step as such.
+	const signature = signer.sign(encodedCall);
+	// The `encodedSignature` is passed around as a hex string, and reaches the publishing step as such.
 
 	// Step 4. Publish the transaction
 	// ---------------------------------------------------------------
@@ -63,12 +62,11 @@ export const sign = async () => {
 
 	// Then, we add the signature:
 	const payload = await buildPayload(api, submittableExtrinsic, address);
-	const decodedSignature = fromHex(encodedSignature);
-	submittableExtrinsic.addSignature(address, decodedSignature, payload);
+	submittableExtrinsic.addSignature(address, signature, payload);
 
 	// Finally, we try submission:
 	try {
-		const _ = await tx.send();
+		const _ = await submittableExtrinsic.send();
 		console.log({
 			message: "Call submitted successfully",
 		});
@@ -123,12 +121,4 @@ const buildPayload = async (
 		tip: api.registry.createType("Compact<Balance>", 0).toHex(),
 		version: tx.version,
 	};
-};
-
-const toHex = (bytes: Uint8Array): string => {
-	return Buffer.from(bytes).toString("hex");
-};
-
-const fromHex = (hex: string): Uint8Array => {
-	return Uint8Array.from(Buffer.from(hex, "hex"));
 };
