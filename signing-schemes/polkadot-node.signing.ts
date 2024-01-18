@@ -2,7 +2,8 @@ import { mnemonicGenerate } from "@polkadot/util-crypto";
 import { waitReady } from "@polkadot/wasm-crypto";
 import { Keyring } from "@polkadot/keyring";
 import { ApiPromise, WsProvider } from "@polkadot/api";
-import "dotenv/config";
+import { SignerPayloadJSON } from "@polkadot/types/types";
+import { Metadata, TypeRegistry } from "@polkadot/types";
 
 // Modify as necessary
 const API_URL = "ws://127.0.0.1:9944";
@@ -10,63 +11,82 @@ const API_URL = "ws://127.0.0.1:9944";
 export const sign = async () => {
 	await waitReady();
 
-	// This is a minimal representation of our decoupled signing process,
-	// motivated by the fact that we have custodial wallets. The process is very contrived
-	// to represent all the internal communication steps; complexity reduction is not an option.
-	//
-	// Step 1. Generate a wallet
-	// ----------------------------------------------------------------
 	const keyring = new Keyring({ type: "sr25519" });
 	const mnemonic = mnemonicGenerate();
 
-	const pair = keyring.addFromUri(mnemonic);
+	const pair = keyring.addFromMnemonic(mnemonic);
 	const wallet = pair.toJson();
 	const encodedWallet = wallet.encoded;
 	const address = wallet.address;
-	// This wallet is encrypted and saved to a DB; we'll not reproduce this step.
 
-	// Step 2. Encode a dispatchable call
-	// ---------------------------------------------------------------
 	const provider = new WsProvider(API_URL);
 	const api = await ApiPromise.create({ provider });
 
-	// The particular values here are irrelevant (I think).
-	const tx = await api.tx.pogrs.mint(
-		1,
-		100,
-		"0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-		1000,
-		1692434303
-	);
-	const encodedCall = tx.toHex();
-	// The `encodedCall` is passed arround as a hex string, and reaches the signing step as such.
+	//
+	//
+	//
+	// ----------------------------------------------------------------
+	// Composer
+	// ----------------------------------------------------------------
+	const tx = api.tx.assets.create(1, address, 1);
+	const payload = await buildPayload(api, tx, address);
 
-	// Step 3. Sign the encoded call
-	// ---------------------------------------------------------------
-	// The wallet is loaded from its json representation
-	const signer = keyring.addFromJson({
+	// Both extrinsicPayload and encodedCall need to be passed
+	const extrinsicPayload = api.createType("ExtrinsicPayload", payload);
+	const encodedCall = tx.toHex();
+	const metadataRpc = await api.rpc.state.getMetadata();
+
+	//
+	//
+	//
+	// ----------------------------------------------------------------
+	// Signer
+	// ----------------------------------------------------------------
+
+	// Heads up: doing this or const signer = keyring.createFromJson(wallet) is the same
+	const signer = keyring.createFromJson({
 		address,
 		meta: {},
 		encoding: { content: ["pkcs8", "sr25519"], type: ["none"], version: "3" },
 		encoded: encodedWallet,
 	});
-	signer.unlock(); // No passphrase was used
+	signer.unlock();
 
-	const signature = signer.sign(encodedCall);
-	// The `encodedSignature` is passed around as a hex string, and reaches the publishing step as such.
+	// The test part ------ vvvvvvvv
+	const registry = new TypeRegistry();
+	const metadata = new Metadata(
+		registry,
+		metadataRpc as unknown as `0x${string}`
+	);
+	registry.setMetadata(metadata);
 
-	// Step 4. Publish the transaction
-	// ---------------------------------------------------------------
-	// We need to reconstruct the SubmittableExtrinsic
-	const submittableExtrinsic = api.tx(encodedCall);
+	const signerExtrinsicPayload = registry.createType(
+		"ExtrinsicPayload",
+		payload as any, // eslint-disable-line
+		{
+			version: tx.version,
+		}
+	);
 
-	// Then, we add the signature:
-	const payload = await buildPayload(api, submittableExtrinsic, address);
-	submittableExtrinsic.addSignature(address, signature, payload);
+	const { signature } = signerExtrinsicPayload.sign(signer);
 
-	// Finally, we try submission:
+	//
+	//
+	//
+	// ----------------------------------------------------------------
+	// Publisher
+	// ----------------------------------------------------------------
+	const call = api.tx(encodedCall);
+	const extrinsic = api.registry.createType(
+		"Extrinsic",
+		{ method: call.method },
+		{ version: call.version }
+	);
+
+	extrinsic.addSignature(signer.address, signature, extrinsicPayload.toHex());
+
 	try {
-		const _ = await submittableExtrinsic.send();
+		const _ = await api.rpc.author.submitExtrinsic(extrinsic.toHex());
 		console.log({
 			message: "Call submitted successfully",
 		});
@@ -80,9 +100,9 @@ export const sign = async () => {
 
 const buildPayload = async (
 	api: ApiPromise,
-	tx: any, // SubmittableExtrinsic, actually
+	tx: any, // SubmittableExtrinsic<"promise", ISubmittableResult>, // SubmittableExtrinsic, actually
 	sender: string
-): Promise<any> => {
+): Promise<SignerPayloadJSON> => {
 	const lastHeader = await api.rpc.chain.getHeader();
 	const blockNumber = api.registry.createType(
 		"BlockNumber",
